@@ -1,27 +1,24 @@
 # -*- coding: utf-8 -*-
 
 ## Copyright(c) 2021 Yoann Robin
-## 
+##
 ## This file is part of CDSK.
-## 
+##
 ## CDSK is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
 ## the Free Software Foundation, either version 3 of the License, or
 ## (at your option) any later version.
-## 
+##
 ## CDSK is distributed in the hope that it will be useful,
 ## but WITHOUT ANY WARRANTY; without even the implied warranty of
 ## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ## GNU General Public License for more details.
-## 
+##
 ## You should have received a copy of the GNU General Public License
 ## along with CDSK.  If not, see <https://www.gnu.org/licenses/>.
 
-###############
-## Libraries ##
-###############
-
-import sys, os
+import sys
+import os
 import itertools as itt
 import numpy as np
 import scipy.stats as sc
@@ -30,13 +27,9 @@ import sklearn.metrics.pairwise as skmp
 import multiprocessing as mp
 import SDFC as sd
 from tqdm import tqdm, trange
-from scipy.special import comb
 
-###############
-## Functions ##
-###############
 
-def _theta_sueveges(idx, ql):  ##{{{
+def _theta_sueveges(idx, ql):
     q = 1 - ql
     Ti = idx[1:] - idx[:-1]
     Si = Ti - 1
@@ -46,20 +39,16 @@ def _theta_sueveges(idx, ql):  ##{{{
     return (K + N + Nc - np.sqrt((K + N + Nc) ** 2 - 8 * Nc * K)) / (2 * K)
 
 
-##}}}
-
-def _theta_ferro(idx):  ##{{{
+def _theta_ferro(idx):
     Ti = idx[1:] - idx[:-1]
     if np.max(Ti) > 2:
         res = 2 * (np.sum(Ti - 1) ** 2) / ((Ti.size - 1) * np.sum((Ti - 1) * (Ti - 2)))
     else:
-        res = 2 * (np.sum(Ti) ** 2) / ((Ti.size - 1) * np.sum(Ti ** 2))
+        res = 2 * (np.sum(Ti) ** 2) / ((Ti.size - 1) * np.sum(Ti**2))
     return min(1, res)
 
 
-##}}}
-
-def _gpd_fit(data, ld_fit):  ##{{{
+def _gpd_fit(data, ld_fit):
     if ld_fit == "scipy":
         shape, _, scale = sc.genpareto.fit(data, floc=0)
         return np.array([scale, shape])
@@ -69,9 +58,7 @@ def _gpd_fit(data, ld_fit):  ##{{{
         return gpd.coef_
 
 
-##}}}
-
-def _local_dimension_parallel(queue, dist, q, ld_fit):  ##{{{
+def _local_dimension_parallel(queue, dist, q, ld_fit):
     size = dist.shape[0]
     ld = np.zeros(size)
     shp = np.zeros(size)
@@ -85,8 +72,8 @@ def _local_dimension_parallel(queue, dist, q, ld_fit):  ##{{{
 
     queue[0].put(ld)
     queue[1].put(shp)
-    
-    
+
+
 def _local_dimension_one_job(dist, q, ld_fit):
     size = dist.shape[0]
     ld = np.zeros(size)
@@ -98,18 +85,16 @@ def _local_dimension_one_job(dist, q, ld_fit):
             ld[i], shp[i] = np.nan, np.nan
         else:
             ld[i], shp[i] = _gpd_fit(data, ld_fit)
-        
+
     return ld, shp
 
 
-##}}}
-
-def _local_dimension(dist, q, where, ld_fit, n_jobs):  ##{{{
+def _local_dimension(dist, q, where, ld_fit, n_jobs):
 
     ## Mean estimator
     if ld_fit not in ["SDFC", "scipy"]:
-        return 1. / np.nanmean(np.where(where, dist - q, np.nan), 1), np.zeros(q.size)
-    
+        return 1.0 / np.nanmean(np.where(where, dist - q, np.nan), 1), np.zeros(q.size)
+
     if n_jobs == 1:
         ld, shp = _local_dimension_one_job(dist, q, ld_fit)
         return 1 / ld, shp
@@ -121,7 +106,12 @@ def _local_dimension(dist, q, where, ld_fit, n_jobs):  ##{{{
     l_threads = []
     for idx in l_idx:
         l_queue.append([mp.Queue(), mp.Queue()])
-        l_threads.append(mp.Process(target=_local_dimension_parallel, args=(l_queue[-1], dist[idx, :], q[idx], ld_fit)))
+        l_threads.append(
+            mp.Process(
+                target=_local_dimension_parallel,
+                args=(l_queue[-1], dist[idx, :], q[idx], ld_fit),
+            )
+        )
         l_threads[-1].start()
 
     for th in tqdm(l_threads):
@@ -131,7 +121,7 @@ def _local_dimension(dist, q, where, ld_fit, n_jobs):  ##{{{
     shp = np.zeros(n_sample)
 
     for idx, queue in zip(l_idx, l_queue):
-        ld[idx] = 1. / queue[0].get()
+        ld[idx] = 1.0 / queue[0].get()
         shp[idx] = queue[1].get()
 
     return ld, shp
@@ -139,17 +129,23 @@ def _local_dimension(dist, q, where, ld_fit, n_jobs):  ##{{{
 
 def compute_theta(X, ql=0.98, theta_fit="sueveges", n_jobs=os.cpu_count(), **kwargs):
     metric = kwargs.get("metric")
-    if metric is None: metric = "euclidean"
+    if metric is None:
+        metric = "euclidean"
     cross_metric = kwargs.get("cross_metric")
-    if cross_metric is None: cross_metric = lambda x, y: np.sqrt(x ** 2 + y ** 2)
-    
+    if cross_metric is None:
+
+        def cross_metric(x, y):
+            return np.sqrt(x**2 + y**2)
+
     if X.ndim == 2:
         X = X.reshape(X.shape + (1,))
     n_sample, n_features, n_traj = X.shape
-    
+
     dist = np.zeros((n_sample, n_sample, n_traj, n_traj))
     for i in range(n_traj):
-        dist[:, :, i, i] = skmp.pairwise_distances(X[:, :, i], X[:, :, i], metric=metric, n_jobs=n_jobs)
+        dist[:, :, i, i] = skmp.pairwise_distances(
+            X[:, :, i], X[:, :, i], metric=metric, n_jobs=n_jobs
+        )
         dist[:, :, i, i] /= np.linalg.norm(dist[:, :, i, i], axis=1).reshape(-1, 1)
 
     for i, j in itt.combinations(range(n_traj), 2):
@@ -157,7 +153,7 @@ def compute_theta(X, ql=0.98, theta_fit="sueveges", n_jobs=os.cpu_count(), **kwa
 
     idx_diag = np.diag_indices(n_sample)
     for i in range(n_traj):
-            dist[:, :, i, i][idx_diag] = sys.float_info.max
+        dist[:, :, i, i][idx_diag] = sys.float_info.max
     dist[~(dist > 0)] = sys.float_info.max
     dist = -np.log(dist)
 
@@ -172,11 +168,17 @@ def compute_theta(X, ql=0.98, theta_fit="sueveges", n_jobs=os.cpu_count(), **kwa
             else:
                 theta[k, i, j] = _theta_sueveges(idx, ql)
     return theta
-    
-##}}}
 
-def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveges", n_jobs=os.cpu_count(),
-                            **kwargs):  ##{{{
+
+def dynamical_local_indexes(
+    X,
+    Y=None,
+    ql=0.98,
+    ld_fit="SDFC",
+    theta_fit="sueveges",
+    n_jobs=os.cpu_count(),
+    **kwargs
+):
     """
     CDSK.dynamical_local_indexes
     ============================
@@ -259,11 +261,13 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
         return_dist = False
     if return_where is None:
         return_where = False
-        
+
     metric = kwargs.get("metric")
-    if metric is None: metric = "euclidean"
+    if metric is None:
+        metric = "euclidean"
     cross_metric = kwargs.get("cross_metric")
-    if cross_metric is None: cross_metric = lambda x, y: np.sqrt(x ** 2 + y ** 2)
+    if cross_metric is None:
+        cross_metric = lambda x, y: np.sqrt(x**2 + y**2)
     ## Data in good format
     YisX = Y is None
     if X.ndim == 2:
@@ -280,7 +284,9 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
     ## Distances
     dist = np.zeros((n_sampleX, n_sampleY, n_traj, n_traj))
     for i in range(n_traj):
-        dist[:, :, i, i] = skmp.pairwise_distances(X[:, :, i], Y[:, :, i], metric=metric, n_jobs=n_jobs)
+        dist[:, :, i, i] = skmp.pairwise_distances(
+            X[:, :, i], Y[:, :, i], metric=metric, n_jobs=n_jobs
+        )
         dist[:, :, i, i] /= np.linalg.norm(dist[:, :, i, i], axis=1).reshape(-1, 1)
 
     for i, j in itt.combinations(range(n_traj), 2):
@@ -292,7 +298,7 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
             dist[:, :, i, i][idx_diag] = sys.float_info.max
     dist[~(dist > 0)] = sys.float_info.max
     dist = -np.log(dist)
-    
+
     ## Local dimension
     ld = np.zeros((n_sampleX, n_traj, n_traj)) + np.nan
     shp = np.zeros((n_sampleX, n_traj, n_traj)) + np.nan
@@ -302,7 +308,11 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
         q[:, i, j] = np.quantile(dist[:, :, i, j], ql, 1)
         where[:, :, i, j] = dist[:, :, i, j] > q[:, i, j].reshape(-1, 1)
         ld[:, i, j], shp[:, i, j] = _local_dimension(
-            dist[:, :, i, j], q[:, i, j].reshape(-1, 1), where[:, :, i, j], ld_fit, n_jobs
+            dist[:, :, i, j],
+            q[:, i, j].reshape(-1, 1),
+            where[:, :, i, j],
+            ld_fit,
+            n_jobs,
         )
 
     ## Theta
@@ -318,7 +328,9 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
     ## Alpha
     alpha = np.zeros((n_sampleX, n_traj, n_traj)) + np.nan
     for i, j in itt.combinations_with_replacement(range(n_traj), 2):
-        alpha[:, i, j] = np.sum(where[:, :, i, i] & where[:, :, j, j], 1) / np.sum(where[:, :, i, i], 1)
+        alpha[:, i, j] = np.sum(where[:, :, i, i] & where[:, :, j, j], 1) / np.sum(
+            where[:, :, i, i], 1
+        )
 
     ## Build tuple output
     out = (ld, theta, alpha)
@@ -331,4 +343,3 @@ def dynamical_local_indexes(X, Y=None, ql=0.98, ld_fit="SDFC", theta_fit="sueveg
         out = out + (where,)
 
     return out
-##}}}
