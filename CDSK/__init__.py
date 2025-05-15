@@ -46,4 +46,5 @@ from .__Mira  import Mira
 
 ## Functions
 from .__dynamical_local_indexes import dynamical_local_indexes
+from .__dynamical_local_indexes import compute_theta
 
